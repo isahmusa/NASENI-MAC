@@ -1,0 +1,8 @@
+{
+  "name": "MAC Studio",
+  "description": "An AI-powered creative and meeting assistant for MAC members. Features mockup generation, photo/audio enhancement, script writing, and a voice-controlled meeting assistant.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ]
+}
