@@ -1,18 +1,18 @@
 
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, getDocs, query, where, deleteDoc, doc, onSnapshot, setDoc } from "firebase/firestore";
-import { getStorage, ref, uploadString, getDownloadURL, deleteObject } from "firebase/storage";
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, UserCredential } from "firebase/auth";
+import { getStorage, ref, uploadString, getDownloadURL, deleteObject, uploadBytes } from "firebase/storage";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, signOut, onAuthStateChanged, sendPasswordResetEmail, User as FirebaseUser } from "firebase/auth";
 import { Project, User, UserRole } from "../types";
 
-// Official config for project smartdeck-f4f7d
+// New Firebase project configuration for mac-app-93e74
 const firebaseConfig = {
-  apiKey: "AIzaSyCteS6RrJQl8EDqunnEUrDaktuS5m75E_A",
-  authDomain: "smartdeck-f4f7d.firebaseapp.com",
-  projectId: "smartdeck-f4f7d",
-  storageBucket: "smartdeck-f4f7d.firebasestorage.app",
-  messagingSenderId: "874974167844",
-  appId: "1:874974167844:web:96b0f4706a0015a608e9b1"
+  apiKey: "AIzaSyAgoptf_VqWbNZ-U_IwhTvHZ-fnZ219dkQ",
+  authDomain: "mac-app-93e74.firebaseapp.com",
+  projectId: "mac-app-93e74",
+  storageBucket: "mac-app-93e74.firebasestorage.app",
+  messagingSenderId: "512823909071",
+  appId: "1:512823909071:web:ee5151d84f3621f3d075ba"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -21,46 +21,93 @@ export const storage = getStorage(app);
 export const auth = getAuth(app);
 
 export const firebaseService = {
-  // --- Admin Authentication ---
-  async loginAdmin(email: string, password: string): Promise<User> {
-    const userCredential: UserCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
-    const fbUser = userCredential.user;
-    
-    // Construct local user object
-    const parts = (fbUser.email || email).split('@')[0].split('.') || ['Admin', 'User'];
-    const lastName = parts[0] || 'Admin';
-    const firstName = parts[1] || 'User';
-    
-    return {
-      firstName: firstName.charAt(0).toUpperCase() + firstName.slice(1),
-      lastName: lastName.charAt(0).toUpperCase() + lastName.slice(1),
-      email: fbUser.email || email,
-      role: UserRole.ADMIN
-    };
+  // --- Authentication ---
+  async login(email: string, password: string): Promise<User> {
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const fbUser = userCredential.user;
+      
+      const [firstName, lastName] = (fbUser.displayName || "User.Member").split('.');
+      
+      return {
+        firstName: firstName || 'User',
+        lastName: lastName || 'Member',
+        email: fbUser.email || email,
+        role: email.toLowerCase().includes('admin') ? UserRole.ADMIN : UserRole.MEMBER
+      };
+    } catch (error: any) {
+      if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+        throw new Error("Password or Email Incorrect");
+      }
+      throw error;
+    }
   },
 
-  async createAdminAccount(email: string, password: string): Promise<User> {
-    const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
-    const fbUser = userCredential.user;
-
-    const parts = email.split('@')[0].split('.') || ['Admin', 'User'];
-    const lastName = parts[0] || 'Admin';
-    const firstName = parts[1] || 'User';
-
-    const adminUser: User = {
-      firstName: firstName.charAt(0).toUpperCase() + firstName.slice(1),
-      lastName: lastName.charAt(0).toUpperCase() + lastName.slice(1),
-      email: email.toLowerCase().trim(),
-      role: UserRole.ADMIN
-    };
-
+  async signUp(email: string, password: string, firstName: string, lastName: string, photoFile?: File): Promise<User> {
     try {
-      await setDoc(doc(db, "staff", email.toLowerCase().trim()), adminUser);
-    } catch (e) {
-      console.warn("Firestore setDoc failed during admin init, API probably disabled:", e);
+      const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      const fbUser = userCredential.user;
+
+      let photoURL = "";
+      if (photoFile) {
+        const storageRef = ref(storage, `profiles/${fbUser.uid}`);
+        await uploadBytes(storageRef, photoFile);
+        photoURL = await getDownloadURL(storageRef);
+      }
+
+      await updateProfile(fbUser, {
+        displayName: `${firstName}.${lastName}`,
+        photoURL: photoURL
+      });
+
+      const newUser: User = {
+        firstName,
+        lastName,
+        email: email.toLowerCase(),
+        role: UserRole.MEMBER
+      };
+
+      // Ensure staff record exists for directory purposes
+      await setDoc(doc(db, "staff", email.toLowerCase().trim()), newUser);
+      
+      return newUser;
+    } catch (error: any) {
+      if (error.code === 'auth/email-already-in-use') {
+        throw new Error("User already exists. Sign in?");
+      }
+      throw error;
     }
-    
-    return adminUser;
+  },
+
+  async sendPasswordReset(email: string) {
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+    } catch (error: any) {
+      if (error.code === 'auth/user-not-found') {
+        throw new Error("No user found with this email address.");
+      }
+      throw error;
+    }
+  },
+
+  async logout() {
+    await signOut(auth);
+  },
+
+  onAuthChange(callback: (user: User | null) => void) {
+    return onAuthStateChanged(auth, (fbUser) => {
+      if (fbUser) {
+        const [firstName, lastName] = (fbUser.displayName || "User.Member").split('.');
+        callback({
+          firstName: firstName || 'User',
+          lastName: lastName || 'Member',
+          email: fbUser.email || '',
+          role: fbUser.email?.toLowerCase().includes('admin') ? UserRole.ADMIN : UserRole.MEMBER
+        });
+      } else {
+        callback(null);
+      }
+    });
   },
 
   // --- Staff Management ---
@@ -71,8 +118,8 @@ export const firebaseService = {
         callback(staff);
       },
       (error) => {
-        console.error("Firestore listen error (API possibly disabled):", error);
-        callback([]); // Return empty list so app doesn't crash
+        console.error("Firestore listen error:", error);
+        callback([]);
       }
     );
   },

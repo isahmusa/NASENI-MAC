@@ -23,75 +23,61 @@ const App: React.FC = () => {
   const [meetingContext, setMeetingContext] = useState<string>('');
   const [activeDocumentName, setActiveDocumentName] = useState<string | null>(null);
 
-  // Load staff directory in real-time from Firebase
+  // Real-time Auth Listening
   useEffect(() => {
-    const unsubscribeStaff = firebaseService.listenToStaff((staff) => {
-      setStaffList(staff);
-      
-      const sessionEmail = localStorage.getItem('mac_studio_user_email');
-      const sessionRole = localStorage.getItem('mac_studio_user_role');
-
-      if (sessionEmail && !user) {
-        if (sessionRole === UserRole.ADMIN) {
-          setUser({
-            firstName: 'Admin',
-            lastName: 'System',
-            email: sessionEmail,
-            role: UserRole.ADMIN
-          });
-        } else {
-          const found = staff.find(s => s.email.toLowerCase() === sessionEmail.toLowerCase());
-          if (found) {
-            setUser(found);
-          }
-        }
+    const unsubscribeAuth = firebaseService.onAuthChange((authUser) => {
+      setUser(authUser);
+      if (authUser) {
+        localStorage.setItem('mac_studio_user_email', authUser.email);
+        localStorage.setItem('mac_studio_user_role', authUser.role);
+      } else {
+        localStorage.removeItem('mac_studio_user_email');
+        localStorage.removeItem('mac_studio_user_role');
       }
       setIsLoading(false);
     });
 
-    return () => unsubscribeStaff();
-  }, [user]);
+    return () => unsubscribeAuth();
+  }, []);
 
-  // Load user-specific projects
+  // Load staff directory
+  useEffect(() => {
+    const unsubscribeStaff = firebaseService.listenToStaff((staff) => {
+      setStaffList(staff);
+    });
+    return () => unsubscribeStaff();
+  }, []);
+
+  // Load projects
   useEffect(() => {
     if (!user) {
       setProjects([]);
       return;
     }
-
     const unsubscribeProjects = firebaseService.listenToUserProjects(user.email, (userProjects) => {
       setProjects(userProjects);
     });
-
     return () => unsubscribeProjects();
   }, [user]);
 
-  const handleLogin = async (email: string) => {
-    if (staffList.length === 0) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+  const handleLogin = async (email: string, pass: string) => {
+    try {
+      const loggedUser = await firebaseService.login(email, pass);
+      setUser(loggedUser);
+      return true;
+    } catch (e: any) {
+      throw e;
     }
-    
-    const foundStaff = staffList.find(s => s.email.toLowerCase() === email.toLowerCase());
-    if (!foundStaff) {
-      return false;
-    }
-    setUser(foundStaff);
-    localStorage.setItem('mac_studio_user_email', foundStaff.email);
-    localStorage.setItem('mac_studio_user_role', foundStaff.role);
-    return true;
   };
 
   const handleAdminLogin = (adminUser: User) => {
     setUser(adminUser);
-    localStorage.setItem('mac_studio_user_email', adminUser.email);
-    localStorage.setItem('mac_studio_user_role', adminUser.role);
     setActiveView('dashboard');
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await firebaseService.logout();
     setUser(null);
-    localStorage.removeItem('mac_studio_user_email');
-    localStorage.removeItem('mac_studio_user_role');
     setActiveView('dashboard');
   };
 
